@@ -1,0 +1,184 @@
+\section{Method}
+\label{sec:method}
+
+\subsection{Overview}
+
+We introduce \textbf{PatchAlign3D}, a two-stage framework for pre-training a point cloud transformer
+to produce language-aligned local features and enable zero-shot 3D part segmentation.  
+Following standard transformer-based 3D encoders such as PointBERT \cite{yu2022point}, our model operates on a sequence of patch tokens extracted from the input point cloud and outputs token features.
+
+Our framework pre-trains a transformer encoder on these patch sets through two complementary stages, illustrated in \cref{fig:arch}:
+\textbf{Stage 1} distills multi-view dense visual priors from a 2D feature extractor into a transformer-based point cloud encoder's token representation. This stage encourages the model to capture fine-grained rich features of strong 2D models, and serves as a robust initialization for the subsequent stage.
+\textbf{Stage 2} aligns these 3D patch representations with textual embeddings in a contrastive approach to enable zero-shot local language reasoning. Importantly, operating at the patch level mitigates the noise and inconsistency present in Find3D's point-level annotations.
+\textbf{At inference time}, we compare the embedding similarities between PatchAlign3D's output patch features and target textual queries, then the scores are propagated back to point-level labels.  
+This two-stage approach produces strong features that enable downstream segmentation tasks without requiring multi-view rendering at inference time, relying solely on feed-forward shape processing.
+
+\subsection{Data and Architecture}
+
+\mypara{Training data.}
+We follow the Find3D \cite{ma2025find} data engine's method to construct a 3D part annotation dataset. First, we select 32,052 shapes from a curated subset of Objaverse~\cite{deitke2023objaverse}, splitting them into 28,827 for training and 3,225 for validation. In total, we obtain more than 2 million part annotations across 761 object categories.
+Each shape is rendered into 10 views, and multi-scale 2D masks for these views are generated using SAM~\cite{kirillov2023segment}.
+Each masked view is then provided to the Gemini 1.5 \cite{team2023gemini} model, which predicts a single-word description for the masked region. These short labels (e.g., leg, wing, lid) are used as part-level text queries during both training and inference.
+The 2D annotations are back-projected onto the corresponding 3D point cloud, producing per-point pseudo-labels.
+Since points may appear in several rendered views, some receive multiple labels, which are retained as multi-label supervision during pre-training. 
+%We will release the complete training data upon acceptance. 
+
+\mypara{Architecture.}
+Recent 3D foundation models \cite{xue2023ulip,liu2023openshape,zhou2023uni3d}
+%such as ULIP \cite{xue2023ulip}, OpenShape \cite{liu2023openshape}, and Uni3D \cite{zhou2023uni3d} 
+have demonstrated that transformer-based encoders, such as PointBERT \cite{yu2022point}, are effective for large-scale pre-training. We adopt a similar backbone.
+The input point cloud is first partitioned into $G$ local patches $\{P_i\}_{i=1}^{G}$, each containing $k$ points. Patch centers ${c_i}$ are sampled using farthest-point sampling (FPS), and local neighborhoods are formed by selecting the $k$ nearest points around each centroid.
+
+Each patch $P_i$ is encoded into a feature token through a lightweight PointNet. The corresponding centroid $c_i$ is embedded using a small MLP and added to the patch token as a positional encoding. The resulting sequence of $G$ tokens is then processed by a 12-layer vanilla transformer encoder~\cite{vaswani2017attention}.
+
+
+\mypara{2D Dense Feature Extraction.}
+In Stage 1, PatchAlign3D transfers semantic priors from 2D vision models into the 3D domain. To prepare these priors, we use a dense 2D feature extractor $\phi_{\text{2D}}$ that outputs a spatial feature field
+$F_r(u,v)$ for each rendered view $r$.
+We follow the multi-view feature extraction strategy of~\cite{garosi20253d} to project these features to the corresponding point cloud:
+the 2D features are first upsampled to the original image resolution using bicubic interpolation and then back-projected to the 3D surface.
+Each pixel $(u,v)$ corresponds to a visible surface point $x_{uv} \in \mathbb{R}^3$,
+which inherits the 2D feature value $F_r(u,v)$ from that view.
+%A 3D point observed in multiple renderings accumulates the features of all views in which it appears:
+Each 3D point aggregates features from all renderings in which it is visible:
+\begin{equation}
+    d(x) = \frac{1}{|\mathcal{V}(x)|}
+\sum_{r \in \mathcal{V}(x)} F_r(u_r(x), v_r(x)),
+\end{equation}
+% \[
+% d(x) = \frac{1}{|\mathcal{V}(x)|}
+% \sum_{r \in \mathcal{V}(x)} F_r(u_r(x), v_r(x)),
+% \]
+where $\mathcal{V}(x)$ denotes the set of views that observe point $x$.
+Points not visible in any view are assigned interpolated features from nearby observed points using nearest-neighbor interpolation.
+In practice, we use DINOv2~\cite{oquab2023dinov2} as $\phi_{\text{2D}}$ for all experiments,
+ensuring a fair comparison with rendering-based baselines, though the procedure is model-agnostic
+and compatible with any dense visual encoder.
+
+To reduce storage and computation, we aggregate per-point features into patch-level
+representations using the same procedure described earlier.
+For each patch $P_i = \{x_m^{(i)}\}_{m=1}^{k}$, the target feature is computed as the mean
+of its constituent point features:
+\begin{equation}
+d_i = \frac{1}{k} \sum_{m=1}^{k} d(x_m^{(i)}).
+\end{equation}
+For every shape, we cache the patch centers $c_i^{\text{cache}}$, memberships, and target features $\{d_i\}$.
+This pre-processing produces consistent 3D features that serve as supervision for Stage 1 2D–3D feature distillation.
+
+\subsection{Two-Stage  Pre-training}
+
+\mypara{Stage 1: 2D-to-3D feature distillation.}
+Each shape is partitioned into \(G\) patches of size \(k\) points, following the same above procedure.
+To ensure correspondence with cached features, each online patch center $c_i^{\text{online}}$ is matched
+to the nearest cached center $c_j^{\text{cache}}$.
+The cached visual feature $d_{j}$ serves as the supervision for patch $P_i$.
+The transformer encoder $f_\theta$ maps each patch to a latent token
+$z_i = f_\theta(P_i) \in \mathbb{R}^d$,
+which is projected to the 2D feature space through a linear head $h_{\text{2D}}$.
+The model is optimized with a cosine-similarity regression loss:
+\begin{equation}
+\mathcal{L}_{\text{2D}} =
+\frac{1}{G} \sum_{i=1}^{G}
+\Big[ 1 -
+\frac{h_{\text{2D}}(z_i)^\top d_i}{
+\|h_{\text{2D}}(z_i)\|_2 \, \|d_i\|_2}
+\Big].
+\end{equation}
+This pre-training step transfers rich fine-grained representations from the 2D feature space to the 3D encoder in a self-supervised manner, and prepares the encoder for the coarser, language-based supervision of Stage 2.
+
+\mypara{Stage 2: 3D–text patch contrastive learning.}
+We initialize Stage 2 from the Stage 1 checkpoint and freeze the early layers to preserve the geometry-aware representations and prevent catastrophic forgetting. Only the final transformer block and a lightweight linear head $h_{\text{text}}$ are trained to align patch embeddings with the text encoder's feature space.
+To supervise this alignment, we adopt the sigmoid-based contrastive formulation introduced in SigLIP~\cite{zhai2023sigmoid}, which replaces the standard softmax normalization. This design is shown to be more effective with a small number of negatives.
+For each shape, we consider $G$ patches indexed by $i \in \{1,\ldots,G\}$ and $C_s$ valid part categories indexed by $j \in \{1,\ldots,C_s\}$. Let $t_j \in \mathbb{R}^d$ denote the text embedding corresponding to part $j$, obtained from a pretrained text encoder. Patch–text similarity scores are computed as
+\begin{equation}
+    s_{i,j} = \frac{1}{\tau} \langle z_i, t_j \rangle + b,
+\end{equation}
+where the temperature $\tau > 0$ and bias $b$ are learnable parameters, initialized to $0.1$ and $-10$, respectively. The similarities are converted to probabilities through a sigmoid activation $\sigma(s_{i,j})$.
+
+To add robustness to uncertain boundaries and noisy ground-truth segmentation masks, each patch–part pair is assigned a fractional label $y_{i,j} \in [0,1]$ proportional to the fraction of points in patch $P_i$ that belong to part $j$. Hence, $y_{i,j} = 1$ when all points belong to part $j$, and $y_{i,j} > 0$ when the patch partially overlaps that part. Each patch can be associated with multiple text annotations, which leads to a multi-positive contrastive objective.
+
+Negatives are defined \emph{within each sample} as entries with $y_{i,j} = 0$, rather than across the batch. Using only within-sample negatives avoids treating identical parts in different shapes as negatives, which would otherwise harm open-world generalization.
+
+Training minimizes a sigmoid binary cross-entropy loss:
+\begin{equation}
+\scalebox{0.75}{$
+\mathcal{L}_{\text{text}} =
+\sum_{i=1}^{G} \sum_{j=1}^{C_s}
+\big[
+ -\, y_{i,j} \log \sigma(s_{i,j})
+ - (1 - y_{i,j}) \log (1 - \sigma(s_{i,j}))
+\big].
+$}
+\end{equation}
+To further improve generalization, we apply geometric data augmentations during training, including random rotations, translations, scaling, and point jittering.
+
+\mypara{Inference.}
+At test time, for zero-shot segmentation, we compute the similarity between the 3D encoder's output patch features and the text features of the target part names. Each patch is assigned the label corresponding to the maximum similarity score, and patch predictions are upsampled to point-level labels by assigning each point the label of its nearest patch centroid.
+
+
+\newcommand{\rowlabel}[1]{%
+  \smash{\raisebox{30pt}{\rotatebox[origin=c]{90}{\scriptsize #1}}}%
+}
+
+\begin{figure*}[tp]
+    \centering
+    \setlength{\tabcolsep}{1pt}
+    \renewcommand{\arraystretch}{1} % or 1.0 / 1.02; labels are smashed so this is safe
+
+    \begin{tabular}{@{}c*{6}{c}@{}}
+        % ---------- Row 1 : Ground truth ----------
+        \rowlabel{Ground truth} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Airplane/GT.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Cap/GT.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Car/GT.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Chair/GT.png} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Earphone/GT.png}} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Lamp/GT.png}} \\[-10pt]
+
+        % ---------- Row 2 : COPS ----------
+        \rowlabel{COPS} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Airplane/COPS_HGR.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Cap/COPS_HGR.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Car/COPS_HGR.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Chair/COPS_HGR.png} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Earphone/COPS_HGR.png}} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Lamp/COPS_HGR.png}} \\[-10pt]
+
+        % ---------- Row 3 : Find3D ----------
+        \rowlabel{Find3D} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Airplane/find3D.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Cap/find3D.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Car/find3D.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Chair/find3D.png} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Earphone/find3D.png}} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Lamp/find3D.png}} \\[-10pt]
+
+        % ---------- Row 4 : Ours (PatchAlign3D) ----------
+        \rowlabel{PatchAlign3D} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Airplane/PB.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Cap/PB.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Car/PB.png} &
+        \includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Chair/PB.png} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Earphone/PB.png}} &
+        \raisebox{-0.12\height}{\includegraphics[width=0.14\textwidth]{figs/shapenetpartrenders/Lamp/PB.png}} \\[0pt]
+
+        % ---------- Legend row ----------
+        & {\scriptsize \{\textcolor{blue}{body}, \textcolor{orange}{wing}, \textcolor{red}{tail}, \textcolor{darkgreen}{engine}\}} &
+          {\scriptsize \{\textcolor{blue}{crown}, \textcolor{orange}{brim}\}} &
+          {\scriptsize \{\textcolor{blue}{roof}, \textcolor{orange}{hood}, \textcolor{red}{wheel}, \textcolor{darkgreen}{body}\}} &
+          {\scriptsize \{\textcolor{blue}{back}, \textcolor{orange}{seat}, \textcolor{red}{leg}, \textcolor{darkgreen}{arm}\}} &
+          {\scriptsize \{\textcolor{blue}{earcup}, \textcolor{orange}{headband}, \textcolor{red}{wire}\}} &
+          {\scriptsize \{\textcolor{blue}{base}, \textcolor{orange}{shade}, \textcolor{red}{bracket}, \textcolor{darkgreen}{pole}\}}
+    \end{tabular}
+
+    \caption{\textbf{Qualitative comparisons on ShapeNetPart \cite{yi2016scalable}.} 
+    We show ground truth (top row) and predictions from COPS~\cite{garosi20253d}, Find3D~\cite{ma2025find}, and PatchAlign3D 
+    (rows 2–4) across six representative shapes. 
+    The part legends below each column indicate the semantic labels used for zero-shot prediction. 
+    PatchAlign3D produces noticeably more precise and coherent segmentations, despite relying 
+    solely on an encoder and patch-level features.}
+    \label{fig:qual_4x6}
+\end{figure*}
+
+
+

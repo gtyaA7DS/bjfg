@@ -1,0 +1,11 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We introduced PatchAlign3D, an encoder-only 3D transformer that learns semantically meaningful patch-level representations for zero-shot part segmentation. Our two-stage pre-training strategy first distills dense 2D priors from a vision backbone into 3D patch tokens, and then aligns these tokens with a text encoder using a multi-positive contrastive objective. This design enables feed-forward, single-pass inference at test time, without any multi-view rendering or prompt engineering. Across five benchmarks spanning synthetic and real-world data, rigid and non-rigid shapes, and seen and unseen categories, PatchAlign3D consistently outperforms both rendering-based vision--language pipelines and previous feed-forward 3D encoders, while remaining computationally efficient.
+
+\mypara{Limitations and future work.}
+Despite these gains, our approach has several limitations. PatchAlign3D is pre-trained on a curated Objaverse subset with imperfect pseudo-part annotations derived from SAM and a language model. The pre-training set still covers only a small fraction of the 800K+ objects available in Objaverse.
+These constraints open up several promising directions for future work. One avenue is to scale PatchAlign3D to larger, more diverse data sets, while also increasing the encoder's scale. Another direction is to replace the fixed patching scheme with more adaptive or hierarchical partitioning strategies to handle point clouds of different sizes. A natural extension is to generalize the encoder to inherit the global understanding of existing 3D foundation models.
+\\
+\\
+\mypara{Acknowledgements} Parts of this work were supported by the ERC Consolidator Grant 101087347 (VEGA). The authors also gratefully acknowledge gifts from Ansys and Adobe Inc. This work was also supported by funding from King Abdullah University of Science and Technology (KAUST) – Center of Excellence for Generative AI, under award number 5940 and a gift from Google.
