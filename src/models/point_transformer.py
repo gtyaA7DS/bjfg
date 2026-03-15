@@ -104,9 +104,9 @@ class Encoder(nn.Module):
     def forward(self, point_groups):
         bs, g, n, c = point_groups.shape
         point_groups = point_groups.reshape(bs * g, n, c).permute(0, 2, 1)  # (B*G, C, N)
-        feature = self.first_conv(point_groups)
-        feature_global = torch.max(feature, 2, keepdim=True)[0]
-        feature_global = feature_global.repeat(1, 1, n)
+        feature = self.first_conv(point_groups)  #  (B*G, C, N) -> (B*G, 256, N)
+        feature_global = torch.max(feature, 2, keepdim=True)[0]  #(B*G, 256, 1)
+        feature_global = feature_global.repeat(1, 1, n) #(B*G, 256, n)
         feature = torch.cat([feature_global, feature], 1)
         feature = self.second_conv(feature)
         feature = feature.max(dim=2)[0]  # (B*G, encoder_channel)
@@ -260,9 +260,9 @@ class get_model(nn.Module):
         pos = self.pos_embed(center)
 
         x = torch.cat((cls_tokens, group_tokens), dim=1)
-        pos = torch.cat((cls_pos, pos), dim=1)
-        feature = self.blocks(x, pos)
-        patch_emb = self.norm(feature)[:, 1:, :].transpose(-1, -2).contiguous()
+        pos = torch.cat((cls_pos, pos), dim=1)  #(B, G+1, trans_dim)
+        feature = self.blocks(x, pos) # 用 self-attention 让所有 patch 彼此交互,同时把 patch center 的位置编码 pos 加进去
+        patch_emb = self.norm(feature)[:, 1:, :].transpose(-1, -2).contiguous()# 去掉cls token
         patch_centers = center.transpose(-1, -2).contiguous()
         return patch_emb, patch_centers, patch_idx
 
