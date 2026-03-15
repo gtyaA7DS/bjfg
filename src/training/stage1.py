@@ -35,7 +35,7 @@ class PatchToDinoProj(nn.Module):
         x = self.proj(x)
         return F.normalize(x, dim=-1)
 
-
+# 离线 DINO patch 特征读取缓存器
 class DinoTargetCache:
     """LRU cache for canonical DINO patch targets.
 
@@ -58,8 +58,8 @@ class DinoTargetCache:
             return self._store[item_id]
         path = self._path_for(item_id)
         obj = torch.load(path, map_location="cpu")
-        centers_xyz = obj["centers_xyz"].float()  # (G,3)
-        patch_feats = obj["patch_feats"].float()  # (G,D)
+        centers_xyz = obj["centers_xyz"].float()  # (G,3)，patch中心坐标
+        patch_feats = obj["patch_feats"].float()  # (G,D),每个patch 的DINO特征（结合2D 视图）
         d_dim = int(obj.get("feature_dim", patch_feats.shape[-1]))
         out = (centers_xyz, F.normalize(patch_feats, dim=-1), d_dim)
         self._store[item_id] = out
@@ -94,9 +94,9 @@ def build_model(args, device):
         depth=12,
         drop_path_rate=0.1,
         cls_dim=50,
-        num_heads=6,
-        group_size=args.group_size,
-        num_group=args.num_group,
+        num_heads=6, 
+        group_size=args.group_size, #每个patch  包含多少点
+        num_group=args.num_group,  #每个点云切多少个 patch（G）
         encoder_dims=256,
         color=False,
         num_classes=16,

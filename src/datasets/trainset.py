@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import Dataset
 
 # Default root can be overridden by CLI
-DATA_ROOT = "/path/to/data_root"
+DATA_ROOT = "/root/data/core_subset"
 
 
 def _gather_item_ids(root):
@@ -90,7 +90,7 @@ def _mask_aware_indices(points, label_masks, total, min_per_label, seed):
             continue
         take = min(min_per_label, idx_mask.numel())
         if take <= 0:
-            continue
+            continue  #最远点采样，采样take个，选一组分布均匀的代表点
         sel = _fps_cpu(pts[idx_mask], take, gen)
         chosen[idx_mask[sel]] = True
 
@@ -150,7 +150,7 @@ class TrainingSetDataset(Dataset):
 
     def __len__(self):
         return len(self.samples)
-
+ # 根据uid 载入点云数据
     def _load_points(self, uid):
         pts_path = self.root / "labeled" / "points" / uid / "points.pt"
         pts = torch.load(pts_path, map_location='cpu').float()
@@ -172,10 +172,10 @@ class TrainingSetDataset(Dataset):
             label_rows = label_rows[:m]
 
         label_to_idx = OrderedDict()
-        union_masks = []
+        union_masks = [] # 标签索引，mask
         for mask, name in zip(mask2points, label_rows):
             if not name:
-                continue
+                continue # 同名mask 合并
             if name in label_to_idx:
                 union_masks[label_to_idx[name]] |= mask
             else:
@@ -183,13 +183,13 @@ class TrainingSetDataset(Dataset):
                 union_masks.append(mask.clone())
         if not union_masks:
             raise RuntimeError(f"No valid labels for {item_id}")
-
+ # list to tensor 
         label_masks = torch.stack(union_masks)
         label_names = list(label_to_idx.keys())
 
         points = self._load_points(uid)
         point_feat = points
-
+      #按标签取点
         if self.random_subsample:
             N = point_feat.shape[0]
             if self.npoints >= N:
@@ -208,9 +208,9 @@ class TrainingSetDataset(Dataset):
 
         sample = {
             'item_id': item_id,
-            'idx_sel': idx_sel.clone(),
+            'idx_sel': idx_sel.clone(),  #采样的点云序列
             'points': pts_sel,
-            'point_labels': point_labels,
+            'point_labels': point_labels, #待训练的标签
             'label_masks': label_masks_sel,
             'label_names': label_names
         }

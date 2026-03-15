@@ -51,7 +51,7 @@ class Group(nn.Module):
 
 class PatchedGroup(nn.Module):
     """Same as Group but also returns patch membership indices."""
-
+     # 先 fps获得中心,再knn获得临近点
     def __init__(self, num_group, group_size):
         super().__init__()
         self.num_group = num_group
@@ -251,7 +251,7 @@ class get_model(nn.Module):
         """
         B, C, N = pts.shape
         pts_bn = pts.transpose(-1, -2).contiguous()  # (B, N, C)
-        neighborhood, center, patch_idx = self.group_divider(pts_bn)
+        neighborhood, center, patch_idx = self.group_divider(pts_bn)  # 分patch，neighborhood 的形状 (B, G, M, C )，G 是patch 块个数，是fps 采样中心点的个数，M是knn 搜索出来的个数 ；patch_idx 每个 patch 成员点在原始点云中的索引
         group_tokens = self.encoder(neighborhood)
         group_tokens = self.reduce_dim(group_tokens)
 
