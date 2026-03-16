@@ -81,12 +81,12 @@ python patchalign3d/tools/build_text_bank.py \
 
 ### Stage 1 (visual alignment)
 ```
-python patchalign3d/training/stage1.py \
-  --data_root /path/to/data_root \
-  --train_list /path/to/train.txt \
-  --val_list /path/to/val.txt \
-  --gpu 0 --batch_size 32 --epoch 100 \
-  --eval_every 2 --save_every 10 \
+python PatchAlign3D/src/training/stage1.py \
+ --data_root /root/data/core_subset \
+ --train_list /root/data/core_subset/labeled/split/train.txt \
+ --val_list /root/data/core_subset/labeled/split/val.txt \
+  --gpu 0 --batch_size 16 --epoch 20 \
+  --eval_every 2 --save_every 5 \
   --npoint 2048 --num_group 128 --group_size 32 \
   --random_sample_train --train_encoder \
   --dino_feature_subdir patch_dino
