@@ -91,7 +91,7 @@ def prepare_points(sample, device):
 def build_model(args, device):
     cfg = EasyDict(
         trans_dim=384,
-        depth=5,
+        depth=15,
         drop_path_rate=0.1,
         cls_dim=50,
         num_heads=6, 
@@ -133,7 +133,7 @@ def train_epoch_dino(model, proj, loader, optimizer, device, cache, augment=None
                 centers_c = centers_canon.to(device)
                 dmat = torch.cdist(ctr_b.unsqueeze(0), centers_c.unsqueeze(0)).squeeze(0) # (G, G) ；在线 patch 中心和离线 patch 中心的两两欧氏距离矩阵
                 map_idx = dmat.argmin(dim=-1) # 对每个在线 patch，找最近的离线 patch 索引。 (G,)
-                tgt = feats_canon.to(device)[map_idx] # 按最近邻映射，把对应的离线 DINO 特征取出来
+                tgt = feats_canon.to(device)[map_idx] # 按最近邻映射，把对应的离线 DINO 特征取出来（通过中心点距离找对应）
                 tgt = F.normalize(tgt, dim=-1)
                 cos = (pred[b] * tgt).sum(dim=-1) # 余弦相似度，(G,)
                 batch_loss = batch_loss + (1.0 - cos).mean()
@@ -229,7 +229,7 @@ def parse_args():
     # Augmentation disabled for stage 1
     # Logging
     p.add_argument("--log_dir", type=str, default="logs/stage1")
-    p.add_argument("--wandb_project", type=str, default="")
+    p.add_argument("--wandb_project", type=str, default="bjfg1")
     p.add_argument("--wandb_entity", type=str, default="")
     p.add_argument("--wandb_run_name", type=str, default="")
     p.add_argument("--wandb_mode", type=str, default="online", choices=["online", "offline", "disabled"])

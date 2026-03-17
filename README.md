@@ -26,6 +26,7 @@ pip install -r requirements.txt
 
 ```
 pip install "git+https://github.com/erikwijmans/Pointnet2_PyTorch.git#egg=pointnet2_ops&subdirectory=pointnet2_ops_lib"
+python -m pip install --no-build-isolation "git+https://github.com/erikwijmans/Pointnet2_PyTorch.git#egg=pointnet2_ops&subdirectory=pointnet2_ops_lib"
 pip install --upgrade https://github.com/unlimblue/KNN_CUDA/releases/download/0.2/KNN_CUDA-0.2-py3-none-any.whl
 ```
 
@@ -81,10 +82,10 @@ python patchalign3d/tools/build_text_bank.py \
 
 ### Stage 1 (visual alignment)
 ```
-python PatchAlign3D/src/training/stage1.py \
- --data_root /root/data/core_subset \
- --train_list /root/data/core_subset/labeled/split/train.txt \
- --val_list /root/data/core_subset/labeled/split/val.txt \
+PYTHONPATH=/root/bjfg python src/training/stage1.py \
+  --data_root /root/data/core_subset \
+  --train_list /root/data/core_subset/labeled/split/train.txt \
+  --val_list /root/data/core_subset/labeled/split/val.txt \
   --gpu 0 --batch_size 16 --epoch 20 \
   --eval_every 2 --save_every 5 \
   --npoint 2048 --num_group 128 --group_size 32 \

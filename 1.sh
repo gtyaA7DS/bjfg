@@ -1,15 +1,42 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
 POINTS_SHARD=/root/data/core/core_part-00001.tar.zst
-RENDER_SHARD=/root/data/core/core_part-00009.tar.zst
+RENDER_SHARD=/root/data/core/core_part-00004.tar.zst
 OUT=/root/data/core_subset
-N=2000
 tmp=$(mktemp -d)
 mkdir -p "$OUT"
 
-# 1) 从渲染分片选 item_id
-( tar --zstd -tf "$RENDER_SHARD" \
+cleanup() {
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+if [ ! -f "$RENDER_SHARD" ]; then
+  echo "[error] RENDER_SHARD not found: $RENDER_SHARD" >&2
+  exit 1
+fi
+
+if [ ! -f "$POINTS_SHARD" ]; then
+  echo "[error] POINTS_SHARD not found: $POINTS_SHARD" >&2
+  exit 1
+fi
+
+# 1) 从渲染分片提取全部 item_id
+tar --zstd -tf "$RENDER_SHARD" \
   | grep -E '^labeled/rendered/.+/oriented/masks/merged/mask_labels[.]txt$' \
   | sed -E 's#^labeled/rendered/(.+)/oriented/masks/merged/mask_labels.txt$#\1#' \
-  | head -n "$N" > "$tmp/item_ids.txt" ) || true
+  | sort -u > "$tmp/item_ids.txt"
+
+ITEM_COUNT=$(wc -l < "$tmp/item_ids.txt")
+if [ "$ITEM_COUNT" -eq 0 ]; then
+  echo "[error] No item_ids found in RENDER_SHARD: $RENDER_SHARD" >&2
+  exit 1
+fi
+
+echo "[info] RENDER_SHARD=$RENDER_SHARD"
+echo "[info] detected item count: $ITEM_COUNT"
 
 # 2) 分开生成“渲染文件清单”和“点云文件清单”
 : > "$tmp/render_files.txt"
