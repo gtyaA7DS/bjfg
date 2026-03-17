@@ -581,8 +581,8 @@ def parse_args():
     p = argparse.ArgumentParser("Stage 2: CLIP patch-text alignment on training data")
     # Model & CLIP
     p.add_argument("--arch", type=str, default="pointtransformer")
-    p.add_argument("--clip_model", type=str, default="ViT-bigG-14")
-    p.add_argument("--clip_pretrained", type=str, default="laion2b_s39b_b160k")
+    p.add_argument("--clip_model", type=str, default="ViT-H-14")
+    p.add_argument("--clip_pretrained", type=str, default="laion2b_s32b_b79k")
     p.add_argument("--clip_tau", type=float, default=0.07)
     p.add_argument("--text_setting", type=str, default="part_only", choices=["part_only"])
     p.add_argument("--text_cache", type=int, default=20000)
@@ -599,7 +599,7 @@ def parse_args():
     p.add_argument("--eval_every", type=int, default=5)
     p.add_argument("--save_every", type=int, default=10)
     p.add_argument("--workers", type=int, default=8)
-    p.add_argument("--train_last_block_only", action="store_true", default=False)
+    p.add_argument("--train_last_block_only", action="store_true", default=True)
     p.add_argument("--train_encoder", action="store_true", default=True)
     p.add_argument("--init_stage1", type=str, default="", help="Path to a Stage 1 checkpoint to init encoder.")
     # Data
@@ -633,7 +633,7 @@ def parse_args():
     p.add_argument("--aug_jitter_clip", type=float, default=0.05)
     # Logging
     p.add_argument("--log_dir", type=str, default="logs/stage2")
-    p.add_argument("--wandb_project", type=str, default="")
+    p.add_argument("--wandb_project", type=str, default="bjfg2")
     p.add_argument("--wandb_entity", type=str, default="")
     p.add_argument("--wandb_run_name", type=str, default="")
     p.add_argument("--wandb_mode", type=str, default="online", choices=["online", "offline", "disabled"])
@@ -702,7 +702,7 @@ def main():
         text_cache = lru_cache
         if bank_dir:
             log_string(f"No text bank found under {bank_dir}; using on-the-fly CLIP encoding.")
-
+   # shapenet
     shapenet_eval_enabled = bool(args.shapenet_root and args.eval_shapenet_every and args.eval_shapenet_every > 0)
     shapenet_text_feats = None
     if shapenet_eval_enabled:
@@ -720,7 +720,7 @@ def main():
         log_string(f"ShapeNetPart eval enabled every {args.eval_shapenet_every} epochs.")
 
     model = build_model(args, device)
-    proj = PatchToTextProj(in_dim=384, out_dim=text_dim).to(device)
+    proj = PatchToTextProj(in_dim=384, out_dim=text_dim).to(device) #线性层，拼接到推理之后的模型
     load_stage1(model, proj=None, path=args.init_stage1, device=device)
     if args.train_last_block_only:
         freeze_encoder_except_last_block(model)
