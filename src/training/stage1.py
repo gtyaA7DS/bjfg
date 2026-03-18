@@ -14,9 +14,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from easydict import EasyDict
 
 from patchalign3d.datasets.trainset import TrainingSetDataset, collate_trainset
+from patchalign3d.models.config import add_backbone_args, build_backbone_config
 from patchalign3d.models import point_transformer
 
 import wandb
@@ -89,18 +89,7 @@ def prepare_points(sample, device):
 
 
 def build_model(args, device):
-    cfg = EasyDict(
-        trans_dim=384,
-        depth=15,
-        drop_path_rate=0.1,
-        cls_dim=50,
-        num_heads=6, 
-        group_size=args.group_size, #每个patch  包含多少点
-        num_group=args.num_group,  #每个点云切多少个 patch（G）
-        encoder_dims=256,
-        color=False,
-        num_classes=16,
-    )
+    cfg = build_backbone_config(args)
     model = point_transformer.get_model(cfg).to(device)
     return model
 
@@ -199,8 +188,7 @@ def eval_epoch_dino(model, proj, loader, device, *, cache: DinoTargetCache, amp:
 def parse_args():
     p = argparse.ArgumentParser("Stage 1: DINO patch alignment on training data")
     # Model
-    p.add_argument("--group_size", type=int, default=32)
-    p.add_argument("--num_group", type=int, default=128)
+    add_backbone_args(p)
     # No color/normal channels in this setup
     # Data
     p.add_argument("--data_root", type=str, required=True)

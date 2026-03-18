@@ -18,8 +18,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from easydict import EasyDict
 
+from patchalign3d.models.config import add_backbone_args, build_backbone_config
 from patchalign3d.models import point_transformer
 
 import open_clip
@@ -167,8 +167,7 @@ def parse_args():
     p.add_argument("--clip_tau", type=float, default=0.07)
     p.add_argument("--assign", type=str, default="nearest", choices=["nearest", "membership"])
     p.add_argument("--gpu", type=str, default="0")
-    p.add_argument("--num_group", type=int, default=128)
-    p.add_argument("--group_size", type=int, default=32)
+    add_backbone_args(p)
     p.add_argument("--out", type=str, default=None, help="Output .npz path")
     p.add_argument("--render", action="store_true", default=False, help="Save a PNG visualization")
     p.add_argument("--render_path", type=str, default=None)
@@ -190,18 +189,7 @@ def main():
     tokenizer = open_clip.get_tokenizer(args.clip_model)
     text_dim = int(getattr(clip_model, "text_projection", None).shape[1] if hasattr(clip_model, "text_projection") else 512)
 
-    cfg = EasyDict(
-        trans_dim=384,
-        depth=12,
-        drop_path_rate=0.1,
-        cls_dim=50,
-        num_heads=6,
-        group_size=args.group_size,
-        num_group=args.num_group,
-        encoder_dims=256,
-        color=False,
-        num_classes=16,
-    )
+    cfg = build_backbone_config(args)
     model = point_transformer.get_model(cfg).to(device)
     proj = PatchToTextProj(in_dim=384, out_dim=text_dim).to(device)
 

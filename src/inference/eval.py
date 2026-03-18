@@ -16,9 +16,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from easydict import EasyDict
 
 from patchalign3d.datasets.shapenet import PartNormalDataset
+from patchalign3d.models.config import add_backbone_args, build_backbone_config
 from patchalign3d.models import point_transformer
 
 import open_clip
@@ -76,19 +76,8 @@ class PatchToTextProj(nn.Module):
         return F.normalize(x, dim=-1)
 
 
-def build_model(num_group, group_size, use_color, use_normal, device):
-    cfg = EasyDict(
-        trans_dim=384,
-        depth=12,
-        drop_path_rate=0.1,
-        cls_dim=50,
-        num_heads=6,
-        group_size=group_size,
-        num_group=num_group,
-        encoder_dims=256,
-        color=bool(use_color or use_normal),
-        num_classes=16,
-    )
+def build_model(args, device):
+    cfg = build_backbone_config(args, color=bool(args.use_color or args.use_normal))
     model = point_transformer.get_model(cfg).to(device)
     return model
 
@@ -426,8 +415,7 @@ def parse_args():
     p.add_argument("--clip_pretrained", type=str, default="laion2b_s39b_b160k")
     p.add_argument("--clip_tau", type=float, default=0.07)
     p.add_argument("--batch_size", type=int, default=16)
-    p.add_argument("--num_group", type=int, default=128)
-    p.add_argument("--group_size", type=int, default=32)
+    add_backbone_args(p)
     p.add_argument("--use_color", action="store_true", default=False)
     p.add_argument("--use_normal", action="store_true", default=False)
     p.add_argument("--gpu", type=str, default="0")
@@ -445,7 +433,7 @@ def main():
     tokenizer = open_clip.get_tokenizer(args.clip_model)
     text_dim = int(getattr(clip_model, "text_projection", None).shape[1] if hasattr(clip_model, "text_projection") else 512)
 
-    model = build_model(args.num_group, args.group_size, use_color=args.use_color, use_normal=args.use_normal, device=device)
+    model = build_model(args, device=device)
     proj = PatchToTextProj(in_dim=384, out_dim=text_dim).to(device)
 
     ckpt = torch.load(args.ckpt, map_location="cpu")

@@ -15,10 +15,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from easydict import EasyDict
 
 from patchalign3d.datasets.trainset import TrainingSetDataset, collate_trainset
 from patchalign3d.datasets.shapenet import PartNormalDataset
+from patchalign3d.models.config import add_backbone_args, build_backbone_config
 from patchalign3d.models import point_transformer
 from patchalign3d.inference import eval as eval_tools
 
@@ -346,18 +346,7 @@ def build_augmentor(enabled, prob, rot_deg, translate, scale_low, scale_high, ji
 
 
 def build_model(args, device):
-    cfg = EasyDict(
-        trans_dim=384,
-        depth=12,
-        drop_path_rate=0.1,
-        cls_dim=50,
-        num_heads=6,
-        group_size=args.group_size,
-        num_group=args.num_group,
-        encoder_dims=256,
-        color=False,
-        num_classes=16,
-    )
+    cfg = build_backbone_config(args)
     model = point_transformer.get_model(cfg).to(device)
     return model
 
@@ -586,8 +575,7 @@ def parse_args():
     p.add_argument("--clip_tau", type=float, default=0.07)
     p.add_argument("--text_setting", type=str, default="part_only", choices=["part_only"])
     p.add_argument("--text_cache", type=int, default=20000)
-    p.add_argument("--num_group", type=int, default=128)
-    p.add_argument("--group_size", type=int, default=32)
+    add_backbone_args(p)
     # Training
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--epoch", type=int, default=100)

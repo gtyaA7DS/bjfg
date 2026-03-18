@@ -37,7 +37,7 @@ Details about how to download training and evaluation data can be found in [here
 Run inference on a single shape and save per-point predictions.
 
 ```
-python patchalign3d/inference/infer.py \
+PYTHONPATH=/root/bjfg_new python src/inference/infer.py \
   --ckpt /path/to/stage2_last.pt \
   --input /path/to/shape.npz \
   --labels "seat,back,leg,arm"
@@ -48,7 +48,7 @@ The stage-2 (PatchAlign3D Model) checkpoint is available on [Hugging Face](https
 
 ### Evaluation (ShapeNetPart)
 ```
-python patchalign3d/inference/eval.py \
+PYTHONPATH=/root/bjfg_new python src/inference/eval.py \
   --ckpt /path/to/ckpt.pt \
   --shapenet_root /path/to/shapenetcore_partanno_segmentation_benchmark_v0_normal \
   --gpu 0 --num_group 128 --group_size 32 \
@@ -63,7 +63,7 @@ python patchalign3d/inference/eval.py \
 If you want to regenerate 2D visual patch features, clone COPS into `PatchAlign3D/cops`, install dependencies and run:
 
 ```
-python patchalign3d/tools/precompute_dino_patch_features.py \
+PYTHONPATH=/root/bjfg_new python src/tools/precompute_dino_patch_features.py \
   --root /path/to/data_root \
   --out_dir_name patch_dino \
   --num_views 10 --view_batch 2 
@@ -71,7 +71,7 @@ python patchalign3d/tools/precompute_dino_patch_features.py \
 
 #### Offline text banks (optional but recommended)
 ```
-python patchalign3d/tools/build_text_bank.py \
+PYTHONPATH=/root/bjfg_new python src/tools/build_text_bank.py \
   --data_root /path/to/data_root \
   --train_list /path/to/train.txt \
   --val_list /path/to/val.txt \
@@ -82,7 +82,7 @@ python patchalign3d/tools/build_text_bank.py \
 
 ### Stage 1 (visual alignment)
 ```
-PYTHONPATH=/root/bjfg python src/training/stage1.py \
+PYTHONPATH=/root/bjfg_new python src/training/stage1.py \
   --data_root /root/data/core_subset \
   --train_list /root/data/core_subset/labeled/split/train.txt \
   --val_list /root/data/core_subset/labeled/split/val.txt \
@@ -90,12 +90,17 @@ PYTHONPATH=/root/bjfg python src/training/stage1.py \
   --eval_every 2 --save_every 5 \
   --npoint 2048 --num_group 128 --group_size 32 \
   --random_sample_train --train_encoder \
-  --dino_feature_subdir patch_dino
+  --dino_feature_subdir patch_dino \
+  --patch_encoder_type hybrid \
+  --patch_ms_scales 8,16,32 \
+  --patch_edge_k 4 \
+  --patch_refine_layers 2 \
+  --patch_refine_k 8
 ```
 
 ### Stage 2 (text alignment)
 ```
-python patchalign3d/training/stage2.py \
+PYTHONPATH=/root/bjfg_new python src/training/stage2.py \
   --data_root /path/to/data_root \
   --train_list /path/to/train.txt \
   --val_list /path/to/val.txt \
@@ -106,8 +111,32 @@ python patchalign3d/training/stage2.py \
   --npoint 2048 --drop_labels_not_in_bank --text_bank_require \
   --num_group 128 --group_size 32 \
   --init_stage1 /path/to/stage1_last.pt \
-  --train_last_block_only
+  --train_last_block_only \
+  --patch_encoder_type hybrid \
+  --patch_ms_scales 8,16,32 \
+  --patch_edge_k 4 \
+  --patch_refine_layers 2 \
+  --patch_refine_k 8
 ```
+
+## Geometric Backbone Upgrade
+The repository now includes a geometry-enhanced backbone variant that keeps the original two-stage PatchAlign3D training flow unchanged while adding:
+
+- A multi-scale EdgeConv branch inside the patch encoder for stronger local geometric modeling.
+- A patch-level geometric refiner before the global transformer for local patch-to-patch reasoning.
+
+Useful ablation switches:
+
+```
+--patch_encoder_type pointnet|hybrid
+--patch_ms_scales 8,16,32
+--patch_edge_k 4
+--patch_refine_layers 2
+--patch_refine_k 8
+--disable_patch_refiner
+```
+
+Design notes for thesis writing and ablation planning are available in [docs/geometry_enhancements.md](docs/geometry_enhancements.md).
 
 ## Citation
 ```
