@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import open_clip
 
-from patchalign3d.datasets import trainset as ds
+from bjfg.datasets import trainset as ds
 
 # Prompt templates
 PART_ONLY_TEMPLATES = ["{}", "a {}", "{} part"]

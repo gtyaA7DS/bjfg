@@ -3,7 +3,7 @@
 Precompute DINOv2 patch features.
 
 Requires COPS (https://github.com/jianglongye/cops) cloned into PatchAlign3D/cops:
-  python -m patchalign3d.tools.precompute_dino_patch_features --root <data_root> --split train
+  python -m bjfg.tools.precompute_dino_patch_features --root <data_root> --split train
 
 Outputs:
   <root>/labeled/rendered/<item_id>/oriented/patch_dino/patch_features.pt

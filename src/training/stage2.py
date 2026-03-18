@@ -16,11 +16,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from patchalign3d.datasets.trainset import TrainingSetDataset, collate_trainset
-from patchalign3d.datasets.shapenet import PartNormalDataset
-from patchalign3d.models.config import add_backbone_args, build_backbone_config
-from patchalign3d.models import point_transformer
-from patchalign3d.inference import eval as eval_tools
+from bjfg.datasets.trainset import TrainingSetDataset, collate_trainset
+from bjfg.datasets.shapenet import PartNormalDataset
+from bjfg.models.config import add_backbone_args, build_backbone_config
+from bjfg.models import point_transformer
+from bjfg.inference import eval as eval_tools
 
 import open_clip
 import wandb

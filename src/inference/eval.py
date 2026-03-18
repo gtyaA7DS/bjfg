@@ -17,9 +17,9 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from patchalign3d.datasets.shapenet import PartNormalDataset
-from patchalign3d.models.config import add_backbone_args, build_backbone_config
-from patchalign3d.models import point_transformer
+from bjfg.datasets.shapenet import PartNormalDataset
+from bjfg.models.config import add_backbone_args, build_backbone_config
+from bjfg.models import point_transformer
 
 import open_clip
 

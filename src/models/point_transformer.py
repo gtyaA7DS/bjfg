@@ -6,7 +6,7 @@ from timm.models.layers import DropPath, trunc_normal_
 from pointnet2_ops import pointnet2_utils
 from knn_cuda import KNN
 
-from patchalign3d.models.config import build_backbone_config
+from bjfg.models.config import build_backbone_config
 
 
 def fps(data, number):

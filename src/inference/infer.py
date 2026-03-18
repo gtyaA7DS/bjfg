@@ -19,8 +19,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from patchalign3d.models.config import add_backbone_args, build_backbone_config
-from patchalign3d.models import point_transformer
+from bjfg.models.config import add_backbone_args, build_backbone_config
+from bjfg.models import point_transformer
 
 import open_clip
 
