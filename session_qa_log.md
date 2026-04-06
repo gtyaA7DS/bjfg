@@ -140,3 +140,14 @@ fatal: loose object ... is corrupt
 - 删除旧兼容目录的影响评估
 - 会话记录文档整理
 
+
+实现已经落地。主改动在 point_transformer.py，现在 backbone 支持 pointnet 和默认的 hybrid 两种 patch encoder，并新增了 patch-level PatchGeometryRefiner；共享配置和新 CLI 参数统一放进了 config.py。训练和推理入口都已经接入这套统一配置，涉及 stage1.py、stage2.py、infer.py、eval.py。说明文档和 README 也补上了，见 geometry_enhancements.md 和 README.md。
+
+验证这边我按你的要求先只测 stage1。已完成：
+
+python -m compileall src
+stage1/stage2/infer/eval 最小 import
+pointnet 与 hybrid 两种模型实例化，forward_patches() shape 正常
+真实训练样本单 batch 的 stage1 前向/反向，loss 有限、梯度正常
+你给的 stage1 小参数实测已完整跑完 1 个 epoch，结果写在 log.txt，关键结果是 train loss 0.5421 | cos 0.4579 | center_dist 0.0521，checkpoint 保存在 last.pt
+这次没有跑完整 stage2，只做了兼容性接线和入口检查。如果你下一步要继续，我建议直接做两件事里的一个：要么我帮你补一组 ablation 命令模板（原版、只加 EdgeConv、只加 Refiner、双模块），要么我继续帮你做 stage2 的小规模联调。

@@ -177,7 +177,7 @@ class EdgeConvScale(nn.Module):
     def forward(self, feats, coords):
         x = self.unit1(feats, coords)
         x = self.unit2(x, coords)
-        return x.max(dim=1).values
+        return x.max(dim=1).values  #（B,C)
 
 
 class MultiScaleEdgeConvBranch(nn.Module):
@@ -201,7 +201,7 @@ class MultiScaleEdgeConvBranch(nn.Module):
         radius = coords.norm(dim=-1)
         order = radius.argsort(dim=-1)
         points = points.gather(1, order.unsqueeze(-1).expand(-1, -1, channels))
-        coords = coords.gather(1, order.unsqueeze(-1).expand(-1, -1, 3))
+        coords = coords.gather(1, order.unsqueeze(-1).expand(-1, -1, 3)) # 按照距离大小排序
 
         scale_features = []
         for scale, block in zip(self.scales, self.scale_blocks):
@@ -212,7 +212,7 @@ class MultiScaleEdgeConvBranch(nn.Module):
 
         fused = torch.cat(scale_features, dim=-1)
         fused = self.fusion_mlp(fused)
-        return fused.reshape(batch_size, num_group, self.out_dim).contiguous()
+        return fused.reshape(batch_size, num_group, self.out_dim).contiguous() #(batch_size, num_group, 256)
 
 
 class HybridPatchEncoder(nn.Module):
