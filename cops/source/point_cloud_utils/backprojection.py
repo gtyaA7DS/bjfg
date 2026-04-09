@@ -18,14 +18,14 @@ def backproject(mapping, point_cloud, pixel_features, device='cpu'):
         It can be indexed as `point_cloud`, so the i-th feature vector is associated
         to the i-th point in `point_cloud`.
     """
-
+   #mapping 每个像素对应哪个点云的index，[H, W] ，没有的话是-1 ;
     # Feature vector: (points, feature_dimension)
     # For example: for 10,000 points and embedding dimension of 768,
     # features will be a (10000, 768) tensor
-    features = torch.zeros((len(point_cloud), pixel_features.shape[-1]), dtype=torch.float, device=device)
+    features = torch.zeros((len(point_cloud), pixel_features.shape[-1]), dtype=torch.float, device=device) # N,D 
 
     # Get pixel coordinates of pixels on which the point cloud has been projected
-    yx_coords_of_pcd = (mapping != -1).nonzero()
+    yx_coords_of_pcd = (mapping != -1).nonzero()  # [K, 2]所有有效像素的位置坐标,其中 K 是有效像素数
 
     # Map features to the points
     # Explanation: `mapping` is a (HEIGHT, WIDTH) map with the same dimensionality
@@ -48,9 +48,9 @@ def backproject(mapping, point_cloud, pixel_features, device='cpu'):
     # neighbouring pixels. Therefore, they most likely have very similar feature vectors: so overwriting
     # the features and just keeping the "last" that comes (usually the most bottom-right in the
     # `pixel_features` "image") is not an actual problem.
-    features[mapping[mapping != -1]] = pixel_features[yx_coords_of_pcd[:, 0], yx_coords_of_pcd[:, 1]]
+    features[mapping[mapping != -1]] = pixel_features[yx_coords_of_pcd[:, 0], yx_coords_of_pcd[:, 1]] #mapping[mapping != -1] 维度 K 
 
-    return features
+    return features #维度[N, D]  其中[K,D] 是有效的，其他为0
 
 
 def backproject_on_existing_tensor(mapping, features, pixel_features):

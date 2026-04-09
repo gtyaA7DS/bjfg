@@ -178,8 +178,8 @@ def process_item(root, item_id, model, preprocess, img_size, d_dim, device,
     if not (pix2face_path.exists() and p2f_path.exists() and pts_path.exists()):
         print(f"[skip-missing] {item_id}", flush=True)
         return False
-    pix2face = torch.load(pix2face_path, map_location='cpu').numpy()
-    point2face = torch.load(p2f_path, map_location='cpu')
+    pix2face = torch.load(pix2face_path, map_location='cpu').numpy()  #像素到 mesh face 的映射
+    point2face = torch.load(p2f_path, map_location='cpu') # 点云中的点到 mesh face 的映射
     pts = torch.load(pts_path, map_location='cpu').float()
     if pts.ndim != 2:
         pts = pts.reshape(-1, pts.shape[-1])
@@ -195,7 +195,7 @@ def process_item(root, item_id, model, preprocess, img_size, d_dim, device,
     if verbose:
         print(f"[item] {item_id} | views={len(views)} | points={pts.shape[0]}", flush=True)
 
-    face2pts = build_face2points(point2face)
+    face2pts = build_face2points(point2face) #每个面片对应的代表点云上的点
 
     vb = max(1, int(view_batch))
     feat_sum = torch.zeros((pts.shape[0], d_dim), dtype=torch.float32, device=device)
@@ -208,7 +208,7 @@ def process_item(root, item_id, model, preprocess, img_size, d_dim, device,
             vidx = view_index_from_name(vp)
             if not (0 <= vidx < pix2face.shape[0]):
                 continue
-            face_map = pix2face[vidx]
+            face_map = pix2face[vidx] # 视图索引号，h,w 值是face_id  
             H0, W0 = face_map.shape
             s = img_size / min(H0, W0)
             newH, newW = int(round(H0 * s)), int(round(W0 * s))
@@ -217,7 +217,7 @@ def process_item(root, item_id, model, preprocess, img_size, d_dim, device,
             arr = np.array(img_face)
             top = max(0, (newH - img_size) // 2); left = max(0, (newW - img_size) // 2)
             face_rc = arr[top:top + img_size, left:left + img_size]
-            point_map = face_map_to_point_map(face_rc, face2pts)
+            point_map = face_map_to_point_map(face_rc, face2pts) # point_map 每个像素对应的点云上面的点
             maps_b.append(torch.from_numpy(point_map).long())
             img = Image.open(vp).convert('RGB')
             imgs_b.append(preprocess(img))
@@ -225,37 +225,37 @@ def process_item(root, item_id, model, preprocess, img_size, d_dim, device,
             continue
         X = torch.stack(imgs_b, dim=0).to(device)
         out = model(pixel_values=X)
-        last = out.last_hidden_state
+        last = out.last_hidden_state 
         # Trim any register tokens so the patch length forms a square grid
-        last = _trim_register_tokens_to_grid(last, model)
-        feat_pix = interpolate_feature_map(last, width=img_size, height=img_size, mode='bicubic')  # (B,H,W,D)
+        last = _trim_register_tokens_to_grid(last, model)  #DINOv2输出的特征向量， [B, 1 + H_patch * W_patch, 768] ,第二维度，图像被切成多少个 patch, ViT
+        feat_pix = interpolate_feature_map(last, width=img_size, height=img_size, mode='bicubic')  # 通过bicubic 插值扩大,(B,H,W,D)
         for j in range(feat_pix.shape[0]):
             pmap = maps_b[j].to(device)
-            pf = feat_pix[j].to(device)
-            pcd_feat = backproject(pmap, pts[:, :3].to(device), pf, device=device.type)
-            valid = ~torch.all(pcd_feat == 0.0, dim=-1)
-            feat_sum[valid] += pcd_feat[valid]
-            feat_cnt[valid] += 1.0
+            pf = feat_pix[j].to(device) # pmap 每个像素对应哪个点云的index，[H, W] ，没有的话是-1 ; pf [H, W, D]
+            pcd_feat = backproject(pmap, pts[:, :3].to(device), pf, device=device.type)# #维度[N, D]  其中[K,D] 是有效的，其他为0
+            valid = ~torch.all(pcd_feat == 0.0, dim=-1) # N
+            feat_sum[valid] += pcd_feat[valid] #把当前视图里有效点的特征，加到累计和里
+            feat_cnt[valid] += 1.0  #对这些有效点，把“被看到的次数”加 1
         if verbose:
             print(f"  [views {i}-{i+len(imgs_b)-1}] processed", flush=True)
 
     cnt = feat_cnt.clamp_min(1.0)
     feat_points = (feat_sum / cnt.unsqueeze(-1)).float().cpu()
     if (feat_cnt == 0).any():
-        feat_points = interpolate_point_cloud(pts[:, :3].cpu(), feat_points.cpu(), neighbors=20)
+        feat_points = interpolate_point_cloud(pts[:, :3].cpu(), feat_points.cpu(), neighbors=20) #给“完全没被任何视图看到”的点补特征
     feat_points = F.normalize(feat_points.float(), dim=-1)
 
     # Patches
     xyz = pts[:, :3].cpu().numpy()
     centers_idx = fps_np(xyz, k=G, seed=0)
     D = torch.cdist(torch.from_numpy(xyz[centers_idx]).float(), torch.from_numpy(xyz).float()).cpu().numpy()
-    patch_idx = np.argpartition(D, M, axis=1)[:, :M]
-    point2center = D.argmin(axis=0).astype(np.int64)
+    patch_idx = np.argpartition(D, M, axis=1)[:, :M] #[G, M]
+    point2center = D.argmin(axis=0).astype(np.int64) # 每个点离哪个 patch center 最近
 
     patch_feats = torch.zeros((patch_idx.shape[0], d_dim), dtype=torch.float32)
     for g in range(patch_idx.shape[0]):
         ids = torch.from_numpy(patch_idx[g])
-        patch_feats[g] = F.normalize(feat_points[ids].mean(dim=0), dim=-1)
+        patch_feats[g] = F.normalize(feat_points[ids].mean(dim=0), dim=-1) #取出这个 patch 里所有点的特征维度，然后取平均
 
     out_dir.mkdir(parents=True, exist_ok=True)
     torch.save({
@@ -266,7 +266,7 @@ def process_item(root, item_id, model, preprocess, img_size, d_dim, device,
         'centers_xyz': torch.from_numpy(xyz[centers_idx]).float(),
         'patch_idx': torch.from_numpy(patch_idx).long(),
         'point2center': torch.from_numpy(point2center).long(),
-        'patch_feats': patch_feats.half(),
+        'patch_feats': patch_feats.half(), # 点级特征 [N,D] -> patch级特征 [G, D](patch内的每个点取平均得来的)
     }, out_path)
     if verbose:
         print(f"[done] {item_id} → {str(out_path)}", flush=True)
