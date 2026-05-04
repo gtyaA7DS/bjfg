@@ -1,10 +1,7 @@
-"""Evaluation script for PatchAlign3D checkpoints on ShapeNetPart.
 
-This mirrors the behavior of Point-BERT's segmentation/tools/eval_cli.py but
-only depends on PatchAlign3D code (datasets + point_transformer).
-"""
 
 import argparse
+import json
 import os
 import re
 from pathlib import Path
@@ -14,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from bjfg.datasets.shapenet import PartNormalDataset
@@ -57,12 +54,141 @@ PART_PLUS_CAT_TEMPLATES = [
     "a {} part of a {}",
 ]
 
+SCANOBJECTNN_ID2CATEGORY = {
+    0: "bag",
+    1: "bin",
+    2: "box",
+    3: "cabinet",
+    4: "chair",
+    5: "desk",
+    6: "display",
+    7: "door",
+    8: "shelf",
+    9: "table",
+    10: "bed",
+    11: "pillow",
+    12: "sink",
+    13: "sofa",
+    14: "toilet",
+}
+
+SCANOBJECTNN_PART_ID_REMAP = {
+    0: torch.arange(4),
+    1: torch.tensor([0, 1, 2, -1, 3]),
+    2: torch.arange(5),
+    3: torch.arange(7),
+    4: torch.tensor([0, -1, 1, 2, 3, 4]),
+    5: torch.arange(4),
+    6: torch.arange(3),
+    7: torch.arange(3),
+    8: torch.arange(4),
+    9: torch.arange(3),
+    10: torch.arange(3),
+    11: torch.arange(2),
+    12: torch.arange(4),
+    13: torch.arange(5),
+    14: torch.arange(6),
+}
+
 
 def _clean_text(s):
     s = s.strip().lower().replace("_", " ")
     s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def _pc_normalize_np(pc):
+    pc = np.asarray(pc, dtype=np.float32)
+    if pc.size == 0:
+        return pc
+    centroid = np.mean(pc, axis=0, keepdims=True)
+    pc = pc - centroid
+    scale = float(np.max(np.sqrt(np.sum(pc ** 2, axis=1))))
+    if scale > 0:
+        pc = pc / scale
+    return pc.astype(np.float32, copy=False)
+
+
+def _deterministic_choice(num_points, npoints, seed):
+    if npoints <= 0 or num_points == npoints:
+        return np.arange(num_points, dtype=np.int64)
+    rng = np.random.default_rng(int(seed))
+    replace = num_points < npoints
+    return np.asarray(rng.choice(num_points, size=npoints, replace=replace), dtype=np.int64)
+
+
+def _load_scanobjectnn_part_names():
+    prompt_path = Path(__file__).resolve().parents[2] / "cops" / "source" / "prompts" / "ScanObjectNN-Part_part_names.json"
+    if not prompt_path.exists():
+        raise FileNotFoundError(f"ScanObjectNN prompt file not found: {prompt_path}")
+    data = json.loads(prompt_path.read_text(encoding="utf-8"))
+    return {str(cat): [str(x) for x in names] for cat, names in data.items()}
+
+
+class ScanObjectNNPartDataset(Dataset):
+    def __init__(self, root, npoints=2048, split="test", normalize=True, seed=42):
+        if split not in ("train", "test"):
+            raise ValueError(f"Unknown split: {split}")
+        base = Path(root).resolve()
+        if (base / "object_dataset_complete_with_parts_").is_dir():
+            base = base / "object_dataset_complete_with_parts_"
+        if not (base / "split_new.txt").exists():
+            raise FileNotFoundError(f"ScanObjectNN split file not found under: {base}")
+        self.base = base
+        self.npoints = int(npoints)
+        self.normalize = bool(normalize)
+        self.seed = int(seed)
+        self.part_names = _load_scanobjectnn_part_names()
+        samples = []
+        split_path = self.base / "split_new.txt"
+        for line in split_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            cols = line.split("\t")
+            if len(cols) < 2:
+                continue
+            file_name = cols[0].strip()
+            category_id = int(cols[1])
+            is_test = len(cols) >= 3 and cols[2].strip() == "t"
+            if split == "test" and not is_test:
+                continue
+            if split == "train" and is_test:
+                continue
+            samples.append((file_name, category_id))
+        if not samples:
+            raise RuntimeError(f"No ScanObjectNN samples found for split={split} under {self.base}")
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        file_name, category_id = self.samples[idx]
+        category_name = SCANOBJECTNN_ID2CATEGORY[int(category_id)]
+        stem = file_name[:-4] if file_name.endswith(".bin") else file_name
+        points_raw = np.fromfile(self.base / category_name / f"{stem}.bin", dtype=np.float32)
+        labels_raw = np.fromfile(self.base / category_name / f"{stem}_part.bin", dtype=np.float32)
+        points = points_raw[1:].reshape((-1, 11))[:, :3].astype(np.float32)
+        labels = labels_raw[1:].reshape((-1, 2))[:, -1].astype(np.int64)
+        remap = SCANOBJECTNN_PART_ID_REMAP[int(category_id)].cpu().numpy()
+        mapped = np.full(labels.shape, -1, dtype=np.int64)
+        valid = (labels >= 0) & (labels < len(remap))
+        mapped[valid] = remap[labels[valid]]
+        if self.npoints > 0 and points.shape[0] != self.npoints:
+            sel = _deterministic_choice(points.shape[0], self.npoints, self.seed + idx)
+            points = points[sel]
+            mapped = mapped[sel]
+        if self.normalize:
+            points = _pc_normalize_np(points)
+        return {
+            "points": points,
+            "labels": mapped,
+            "label_names": self.part_names[category_name],
+            "category": category_name,
+            "slug": stem,
+        }
 
 
 class PatchToTextProj(nn.Module):
@@ -164,22 +290,38 @@ def compute_point_metrics(point_pred, target, label, seg_classes, id2cat):
     )
 
 
-def compute_point_metrics_generic(point_pred, target, num_labels):
-    """Instance-weighted IoU for datasets without category structure (e.g., FAUST)."""
+def compute_point_metrics_generic(point_pred, target, num_labels, average_mode="all_labels"):
+    """Instance-weighted IoU for datasets without category structure.
+
+    `average_mode="all_labels"` is the generic behavior used for FAUST-like
+    datasets. `average_mode="gt_present"` mirrors the PartSLIP-style shape
+    mIoU: average IoU only over parts that appear in the ground truth for that
+    shape, while ignoring unlabeled points (`target < 0`).
+    """
     B, N = target.shape
-    acc = (point_pred == target).float().mean().item()
+    valid = target >= 0
+    valid_count = valid.sum().item()
+    acc = (((point_pred == target) & valid).float().sum().item() / valid_count) if valid_count > 0 else 0.0
     inst_ious = []
     part_to_ious = {i: [] for i in range(num_labels)}
     for b in range(B):
         preds = point_pred[b]
         gts = target[b]
+        valid_b = gts >= 0
         ious = []
         for pid in range(num_labels):
-            pred_mask = preds == pid
-            gt_mask = gts == pid
+            pred_mask = (preds == pid) & valid_b
+            gt_mask = (gts == pid) & valid_b
+            if average_mode == "gt_present" and gt_mask.sum().item() == 0:
+                continue
             inter = (pred_mask & gt_mask).sum().item()
             union = (pred_mask | gt_mask).sum().item()
-            iou = 1.0 if union == 0 else inter / union
+            if union == 0:
+                if average_mode == "gt_present":
+                    continue
+                iou = 1.0
+            else:
+                iou = inter / union
             ious.append(iou)
             part_to_ious[pid].append(iou)
         if ious:
@@ -324,6 +466,10 @@ class FaustNpzDataset(torch.utils.data.Dataset):
         pts = np.asarray(data["points"], dtype=np.float32)
         labels = np.asarray(data["labels"]).reshape(-1).astype(np.int64)
         names = [str(x) for x in data.get("label_names", [])]
+        category = data.get("category", "")
+        if isinstance(category, np.ndarray):
+            category = category.item() if category.shape == () else category.tolist()
+        category = str(category) if category is not None else ""
         if names and labels.max(initial=-1) >= len(names):
             labels = np.clip(labels, 0, len(names) - 1)
         if self.npoints > 0 and pts.shape[0] != self.npoints:
@@ -332,14 +478,29 @@ class FaustNpzDataset(torch.utils.data.Dataset):
             sel = np.random.choice(N, size=self.npoints, replace=replace)
             pts = pts[sel]
             labels = labels[sel]
-        return {"points": pts[:, :3], "labels": labels, "label_names": names, "slug": path.stem}
+        return {"points": pts[:, :3], "labels": labels, "label_names": names, "category": category, "slug": path.stem}
 
 
 def collate_faust(batch):
     return batch
 
 
-def evaluate_faust(model, proj, clip_model, tokenizer, tau, device, npz_paths, batch_size, num_workers, assign_mode, progress, npoints):
+def evaluate_faust(
+    model,
+    proj,
+    clip_model,
+    tokenizer,
+    tau,
+    device,
+    npz_paths,
+    batch_size,
+    num_workers,
+    assign_mode,
+    progress,
+    npoints,
+    text_setting="part_only",
+    dataset_name="faust",
+):
     dataset = FaustNpzDataset(npz_paths, npoints=npoints)
     dl = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, drop_last=False, collate_fn=collate_faust)
     model.eval()
@@ -356,12 +517,14 @@ def evaluate_faust(model, proj, clip_model, tokenizer, tau, device, npz_paths, b
             points_list = []
             labels_list = []
             names_list = []
+            category_list = []
             for sample in batch:
                 pts = torch.as_tensor(sample["points"], dtype=torch.float32, device=device).unsqueeze(0)  # (1,N,3)
                 labels = torch.as_tensor(sample["labels"], dtype=torch.long, device=device)
                 points_list.append(pts)
                 labels_list.append(labels)
                 names_list.append(sample.get("label_names", []))
+                category_list.append(str(sample.get("category", "") or ""))
             points = torch.cat(points_list, dim=0)  # (B,N,3)
             labels = labels_list
             B, N, _ = points.shape
@@ -372,9 +535,20 @@ def evaluate_faust(model, proj, clip_model, tokenizer, tau, device, npz_paths, b
                 names = names_list[b]
                 if not names:
                     continue
+                category = category_list[b] if b < len(category_list) else ""
                 # Encode each part name separately to get (K,D)
                 text_feats = torch.stack(
-                    [encode_texts([nm], category=None, setting="part_only", clip_model=clip_model, tokenizer=tokenizer, device=device) for nm in names],
+                    [
+                        encode_texts(
+                            [nm],
+                            category=category if category else None,
+                            setting=text_setting,
+                            clip_model=clip_model,
+                            tokenizer=tokenizer,
+                            device=device,
+                        )
+                        for nm in names
+                    ],
                     dim=0,
                 )
                 logits = (x[b] @ text_feats.t()) / max(tau, 1e-6)  # (G,K)
@@ -386,7 +560,12 @@ def evaluate_faust(model, proj, clip_model, tokenizer, tau, device, npz_paths, b
                 # Point assignment
                 point_logits = assign_points_from_patches(points_pt[b : b + 1, :3, :], pc[b : b + 1], logits.unsqueeze(0), pi[b : b + 1], mode=assign_mode)
                 pred = point_logits.argmax(dim=-1).squeeze(0)
-                metrics_b = compute_point_metrics_generic(pred.unsqueeze(0), labels[b].unsqueeze(0), len(names))
+                metrics_b = compute_point_metrics_generic(
+                    pred.unsqueeze(0),
+                    labels[b].unsqueeze(0),
+                    len(names),
+                    average_mode="gt_present" if dataset_name == "partslip" else "all_labels",
+                )
                 acc_sum += metrics_b["acc"]
                 sample_count += 1
                 inst_iou_sum += sum(metrics_b["inst_ious"])
@@ -403,17 +582,115 @@ def evaluate_faust(model, proj, clip_model, tokenizer, tau, device, npz_paths, b
     return metrics
 
 
+def evaluate_scanobjectnn(
+    model,
+    proj,
+    clip_model,
+    tokenizer,
+    tau,
+    device,
+    scanobjectnn_root,
+    batch_size,
+    num_workers,
+    assign_mode,
+    progress,
+    npoints,
+    text_setting="part_only",
+):
+    dataset = ScanObjectNNPartDataset(scanobjectnn_root, npoints=npoints, split="test", normalize=True)
+    dl = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, drop_last=False, collate_fn=collate_faust)
+    model.eval()
+    proj.eval()
+    tot_patch = tot_patch_correct = 0
+    acc_sum = 0.0
+    sample_count = 0
+    inst_iou_sum = 0.0
+    inst_count = 0
+    cat_to_ious = {cat: [] for cat in dataset.part_names}
+    iterator = tqdm(dl, total=len(dl), desc="ScanObjectNN", smoothing=0.9) if progress else dl
+    with torch.no_grad():
+        for batch in iterator:
+            points_list = []
+            labels_list = []
+            names_list = []
+            category_list = []
+            for sample in batch:
+                pts = torch.as_tensor(sample["points"], dtype=torch.float32, device=device).unsqueeze(0)
+                labels = torch.as_tensor(sample["labels"], dtype=torch.long, device=device)
+                points_list.append(pts)
+                labels_list.append(labels)
+                names_list.append(sample.get("label_names", []))
+                category_list.append(str(sample.get("category", "") or ""))
+            points = torch.cat(points_list, dim=0)
+            labels = labels_list
+            points_pt = prepare_points(points)
+            pe, pc, pi = model.forward_patches(points_pt)
+            x = proj(pe)
+            for b in range(points.shape[0]):
+                names = names_list[b]
+                category = category_list[b] if b < len(category_list) else ""
+                if not names or not category:
+                    continue
+                text_feats = torch.stack(
+                    [
+                        encode_texts(
+                            [nm],
+                            category=category if category else None,
+                            setting=text_setting,
+                            clip_model=clip_model,
+                            tokenizer=tokenizer,
+                            device=device,
+                        )
+                        for nm in names
+                    ],
+                    dim=0,
+                )
+                logits = (x[b] @ text_feats.t()) / max(tau, 1e-6)
+                patch_pred = logits.argmax(dim=-1)
+                patch_gt = compute_patch_targets_vector(labels[b], pi[b], len(names))
+                present = patch_gt >= 0
+                tot_patch += present.sum().item()
+                tot_patch_correct += (patch_pred[present] == patch_gt[present]).sum().item()
+                point_logits = assign_points_from_patches(points_pt[b : b + 1, :3, :], pc[b : b + 1], logits.unsqueeze(0), pi[b : b + 1], mode=assign_mode)
+                pred = point_logits.argmax(dim=-1).squeeze(0)
+                metrics_b = compute_point_metrics_generic(
+                    pred.unsqueeze(0),
+                    labels[b].unsqueeze(0),
+                    len(names),
+                    average_mode="gt_present",
+                )
+                acc_sum += metrics_b["acc"]
+                sample_count += 1
+                if metrics_b["inst_ious"]:
+                    inst_iou = float(metrics_b["inst_ious"][0])
+                    inst_iou_sum += inst_iou
+                    inst_count += 1
+                    cat_to_ious.setdefault(category, []).append(inst_iou)
+    per_cat_iou = {k: sum(v) / len(v) for k, v in cat_to_ious.items() if v}
+    metrics = {
+        "patch_acc": tot_patch_correct / max(tot_patch, 1),
+        "point_acc": acc_sum / max(sample_count, 1),
+        "point_miou": inst_iou_sum / max(inst_count, 1),
+        "point_ciou": sum(per_cat_iou.values()) / max(len(per_cat_iou), 1),
+        "per_cat_iou": per_cat_iou,
+    }
+    return metrics
+
+
 def parse_args():
     p = argparse.ArgumentParser("Evaluate PatchAlign3D checkpoint (ShapeNetPart, FAUST)")
     p.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint (.pt)")
     p.add_argument("--shapenet_root", type=str, required=False, default="", help="Path to ShapeNetPart root")
     p.add_argument("--faust_npz", type=str, nargs="*", default=[], help="FAUST NPZ file(s) or directory(ies)")
     p.add_argument("--faust_npoints", type=int, default=2048)
+    p.add_argument("--scanobjectnn_root", type=str, default="", help="Path to ScanObjectNN root")
+    p.add_argument("--scanobjectnn_npoints", type=int, default=2048)
+    p.add_argument("--dataset_name", type=str, default="faust", choices=["faust", "partslip"])
     p.add_argument("--text_setting", type=str, default="part_only", choices=["part_only", "part_plus_cat", "ensemble"])
     p.add_argument("--assign", type=str, default="nearest", choices=["nearest", "membership"])
     p.add_argument("--clip_model", type=str, default="ViT-bigG-14")
     p.add_argument("--clip_pretrained", type=str, default="laion2b_s39b_b160k")
-    p.add_argument("--clip_tau", type=float, default=0.07)
+    p.add_argument("--clip_tau", type=float, default=None, help="Overrides tau. If omitted, try to load learned tau from checkpoint temp.")
     p.add_argument("--batch_size", type=int, default=16)
     add_backbone_args(p)
     p.add_argument("--use_color", action="store_true", default=False)
@@ -456,7 +733,24 @@ def main():
         if unexpected:
             print("  unexpected:", unexpected)
 
-    tau = float(args.clip_tau)
+    tau = None
+    if args.clip_tau is not None:
+        tau = float(args.clip_tau)
+        print(f"[tau] using CLI override: {tau:.6f}")
+    else:
+        temp_state = ckpt.get("temp", None)
+        if isinstance(temp_state, dict):
+            if "log_scale" in temp_state:
+                scale = float(temp_state["log_scale"].exp().item())
+                tau = 1.0 / max(scale, 1e-6)
+                print(f"[tau] loaded from checkpoint temp.log_scale: scale={scale:.6f} tau={tau:.6f}")
+            elif "scale" in temp_state:
+                scale = float(temp_state["scale"].item())
+                tau = 1.0 / max(scale, 1e-6)
+                print(f"[tau] loaded from checkpoint temp.scale: scale={scale:.6f} tau={tau:.6f}")
+    if tau is None:
+        tau = 0.07
+        print(f"[tau] checkpoint temp missing, fallback to default: {tau:.6f}")
 
     if args.shapenet_root:
         dataset_tmp = PartNormalDataset(root=args.shapenet_root, split="test", normal_channel=args.use_normal)
@@ -493,8 +787,28 @@ def main():
             assign_mode=args.assign,
             progress=not args.no_progress,
             npoints=args.faust_npoints,
+            text_setting=args.text_setting,
+            dataset_name=args.dataset_name,
         )
         print("FAUST metrics:", metrics_faust)
+
+    if args.scanobjectnn_root:
+        metrics_scan = evaluate_scanobjectnn(
+            model,
+            proj,
+            clip_model,
+            tokenizer,
+            tau,
+            device,
+            args.scanobjectnn_root,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            assign_mode=args.assign,
+            progress=not args.no_progress,
+            npoints=args.scanobjectnn_npoints,
+            text_setting=args.text_setting,
+        )
+        print("ScanObjectNN metrics:", metrics_scan)
 
 
 if __name__ == "__main__":

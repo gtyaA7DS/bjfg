@@ -3,6 +3,7 @@ torch>=2.1.0
 open_clip_torch>=2.24.0
 timm
 tqdm
+gdown
 easydict
 numpy
 Pillow

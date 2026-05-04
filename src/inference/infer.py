@@ -1,14 +1,4 @@
-#!/usr/bin/env python3
-"""
-Minimal inference for PatchAlign3D stage-2 checkpoints.
 
-Inputs:
-  - .npz with 'points' (N,3) [optional 'label_names']
-  - .ply point cloud
-Outputs:
-  - per-point predictions saved to .npz
-  - optional rendered PNG with legend
-"""
 
 import argparse
 import os

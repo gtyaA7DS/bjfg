@@ -1,4 +1,3 @@
-"""Stage 1: align 3D patch features to offline DINO patch features."""
 
 import argparse
 import datetime

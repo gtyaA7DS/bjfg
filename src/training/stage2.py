@@ -1,4 +1,3 @@
-"""Stage 2: CLIP-guided patch-text training on the training set (chairs) with multi-label BCE."""
 
 import argparse
 import datetime
@@ -25,7 +24,7 @@ from bjfg.inference import eval as eval_tools
 import open_clip
 import wandb
 
-# Prompt templates (part-only focus)
+# Prompt templates 
 PART_ONLY_TEMPLATES = [
     "{}",
     "a {}",
@@ -202,9 +201,14 @@ def try_load_text_banks(bank_dir):
     root = Path(bank_dir)
     if not root.exists():
         return None
-    merged_po = sorted(root.glob("textbank_part_only_*_merged.pt"))
-    if merged_po:
-        return _load_text_bank_file(merged_po[-1])
+    candidates = []
+    direct_po = root / "textbank_part_only.pt"
+    if direct_po.exists():
+        candidates.append(direct_po)
+    candidates.extend(sorted(root.glob("textbank_part_only_*_merged.pt")))
+    if candidates:
+        latest = max(candidates, key=lambda p: p.stat().st_mtime)
+        return _load_text_bank_file(latest)
     return None
 
 

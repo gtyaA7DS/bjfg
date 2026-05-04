@@ -71,8 +71,8 @@ PYTHONPATH=/root/bjfg_new python src/tools/precompute_dino_patch_features.py \
 
 #### Offline text banks (optional but recommended)
 ```
-PYTHONPATH=/root/bjfg_new python src/tools/build_text_bank.py \
-  --data_root /path/to/data_root \
+PYTHONPATH=/root/bjfg_new/bjfg python src/tools/build_text_bank.py \
+  --data_root /root/data/core_subset \
   --train_list /path/to/train.txt \
   --val_list /path/to/val.txt \
   --mode both \
